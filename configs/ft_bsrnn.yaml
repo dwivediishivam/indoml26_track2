@@ -1,0 +1,24 @@
+# Stage 2b: test-condition fine-tune of base_bsrnn. Vaani clean segments excluded (FLEURS + validation references only).
+# Produced checkpoints/ft_bsrnn.pt (1x B200, shared with stage 2a, 50 min).
+arch: bsrnn
+feat: 112
+layers: 6
+init: checkpoints/colabA_bsrnn_feat112.pt
+no_vaani: true
+minutes: 50
+seconds: 10.0
+batch: 8
+lr: 2.0e-4
+workers: 6
+ev_mult: [1.0, 2.0]
+db_shift: [0.0, 3.0]
+p_ext: 0.3
+p_valref: 0.5
+stft_w: 0.5
+act_w: 1.0
+gate_floor: 0.2
+asr_w: 0.1
+asr_every: 2
+seed: 0
+eval_every_min: 10
+eval_on_pseudotest: true

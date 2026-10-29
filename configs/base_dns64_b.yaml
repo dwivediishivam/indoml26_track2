@@ -1,0 +1,18 @@
+# Stage 1c: second DNS64 fine-tune (longer crops, stronger ASR loss, different seed).
+# Produced checkpoints/colabB_dns64_ft.pt (1x NVIDIA A100 80 GB, 150 min). Holdout SI-SDR 18.75 dB.
+arch: demucs
+init_pretrained_dns64: true
+minutes: 150
+seconds: 8.0
+batch: 16
+lr: 2.0e-4
+workers: 3
+p_ext: 0.3
+p_valref: 0.5
+stft_w: 0.5
+act_w: 1.0
+gate_floor: 0.2
+asr_w: 0.2
+asr_every: 2
+seed: 1
+eval_every_min: 20

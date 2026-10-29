@@ -1,0 +1,18 @@
+# Stage 1a: DNS64 (Demucs) fine-tuned from the public DNS64 checkpoint on in-domain event mixtures.
+# Produced checkpoints/b200_dns64.pt (1x NVIDIA B200, 210 min). Holdout SI-SDR 19.04 dB.
+arch: demucs
+init_pretrained_dns64: true      # start from dns64-a7761ff99a7d5bb6.th (facebookresearch/denoiser)
+minutes: 210
+seconds: 6.0                     # crop length of each training mixture
+batch: 16
+lr: 1.0e-4
+workers: 4
+p_ext: 0.3                       # probability a noise event is drawn from ESC-50 instead of the validation noise bank
+p_valref: 0.5                    # probability the clean speech is a validation reference (else Vaani/FLEURS)
+stft_w: 0.5                      # multi-resolution STFT loss weight
+act_w: 1.0                       # event-activity BCE weight (BSRNN only)
+gate_floor: 0.2
+asr_w: 0.1                       # SraVaani encoder feature-consistency loss weight
+asr_every: 2
+seed: 0
+eval_every_min: 20

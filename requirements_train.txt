@@ -1,0 +1,4 @@
+# Training (used: Python 3.10, torch 2.9.1+cu128 on NVIDIA B200; Python 3.13, torch 2.11+cu130 on Colab A100)
+-r requirements_inference.txt
+pyarrow>=15
+jiwer>=3,<5

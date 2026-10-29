@@ -1,0 +1,19 @@
+# Stage 1b: band-split RNN with an event-activity gate, trained from scratch.
+# Produced checkpoints/colabA_bsrnn_feat112.pt (1x NVIDIA A100 80 GB, 180 min). Holdout SI-SDR 19.04 dB (gate floor 0.2).
+arch: bsrnn
+feat: 112
+layers: 6
+minutes: 180
+seconds: 6.0
+batch: 16
+lr: 1.0e-3
+workers: 5
+p_ext: 0.3
+p_valref: 0.5
+stft_w: 0.5
+act_w: 1.0
+gate_floor: 0.2
+asr_w: 0.1
+asr_every: 2
+seed: 1
+eval_every_min: 20

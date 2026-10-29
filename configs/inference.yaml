@@ -1,0 +1,10 @@
+# Final Phase 2 system (Codabench submission 995085, combined 14.6512).
+# Output = mean of the members' enhanced waveforms; BSRNN members use the event gate with this floor.
+members:
+  - checkpoints/ft_dns64.pt
+  - checkpoints/ft_bsrnn.pt
+gate_floor: 0.2
+tta: 1                 # shift test-time augmentation passes (1 = off, as submitted)
+chunk_seconds: 20      # long clips are processed in 20 s chunks with 2 s cross-fade
+asr_model: ARTPARK-IISc/SraVaani-1.0
+asr_batch: 4

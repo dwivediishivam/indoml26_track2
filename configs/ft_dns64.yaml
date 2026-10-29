@@ -1,0 +1,21 @@
+# Stage 2a: test-condition fine-tune of base_dns64 (longer crops, 1-2x denser and 0-3 dB louder events).
+# Checkpoint selection on the pseudo-test (data/pt_testlike). Produced checkpoints/ft_dns64.pt (1x B200, 50 min).
+arch: demucs
+init: checkpoints/b200_dns64.pt
+minutes: 50
+seconds: 10.0
+batch: 16
+lr: 5.0e-5
+workers: 6
+ev_mult: [1.0, 2.0]
+db_shift: [0.0, 3.0]
+p_ext: 0.3
+p_valref: 0.5
+stft_w: 0.5
+act_w: 1.0
+gate_floor: 0.2
+asr_w: 0.1
+asr_every: 2
+seed: 0
+eval_every_min: 10
+eval_on_pseudotest: true

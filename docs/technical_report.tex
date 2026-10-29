@@ -1,0 +1,204 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+
+\begin{document}
+
+\title{Event-Gated Ensemble Enhancement with ASR-Consistent Training for Indic Noise Event Removal}
+
+\author{\IEEEauthorblockN{Shivam Dwivedi, Animish Yadav, Shubhi Jain}
+\IEEEauthorblockA{Team TDS, Indraprastha Institute of Information Technology Delhi (IIIT Delhi), India\\
+\{shivam21352, animish23089, shubhi23517\}@iiitd.ac.in}}
+
+\maketitle
+
+\begin{abstract}
+We present our Track~2 system for the Datathon@IndoML~2026 noise event removal challenge. The task is to
+suppress non-speech events (horns, animals, breathing, children, alarms, machinery, music) in real-world Indic
+speech from the Vaani corpus. The score is the SI-SDR on synthetic clips plus $100\times$ the WER reduction of a
+frozen mandated ASR (SraVaani-1.0) over all clips. A single learned enhancer is applied identically to every clip.
+It averages a waveform-domain DNS64 (Demucs) model and a band-split RNN with a learned frame-level
+\emph{event gate}, so the network detects where events are and leaves noise-free speech untouched. Both models are
+trained on on-the-fly mixtures whose event statistics follow the validation set, with an
+\emph{ASR-consistency loss} on the frozen SraVaani encoder. A second stage fine-tunes them on longer, denser and
+louder mixtures, selecting checkpoints on a \emph{pseudo-test} assembled from held-out validation clips. That
+pseudo-test predicted our leaderboard score within 0.13. Our final submission (Codabench 995085) reaches
+SI-SDR 12.78\,dB and $\Delta$WER $+1.87$ (synthetic $+5.41$), for a combined score of 14.65 (Phase~2 rank~13), with
+the hidden ASR audit passed.
+\end{abstract}
+
+\section{Training Data and Preprocessing}
+\textbf{Vaani Noise Event Dataset}~\cite{vaani} (90,637 segments, 154.6\,h, Gold/Silver/Bronze annotation tiers).
+We use it as a clean-speech pool. From Gold and Silver clips we keep non-event regions of at least 1.5\,s that lie
+at least 0.25\,s from any labelled event, and only from clips whose 10th-percentile frame energy is more than
+28\,dB below the clip RMS. This yields 8\,h of low-background speech.
+
+\textbf{IndoML validation set} (2,501 clips; 1,806 natural, 695 synthetic with clean references). The 695 synthetic
+pairs are split 560 for training and 135 for a holdout. From the 560 we take the clean references (0.81\,h) and
+\emph{1,783 noise events} cut from $\text{noisy}-\text{clean}$ at the labelled spans ($\pm$50\,ms). In these pairs
+the added noise lies entirely inside the spans; outside them the noisy signal equals the clean one.
+
+\textbf{External data.} We use ESC-50~\cite{esc50} (2,000 environmental clips, resampled to 16\,kHz and trimmed to
+the region within 30\,dB of the peak) as a second noise source, so the model generalises beyond the validation
+noise. We also use Google FLEURS~\cite{fleurs} Indic train shards (hi, bn, te, ta, kn, ml, mr, or, as, gu, pa, ne;
+at most 600 utterances per language, 12\,s or shorter) as additional clean read speech. In total the banks hold
+3,783 noise events (2.72\,h) and up to 17.6\,h of clean speech, stored as memory-mapped float16 arrays.
+
+\textbf{Augmentation pipeline} (on the fly; every batch is new).
+\begin{enumerate}
+\item Clean speech is a validation reference with probability 0.5, otherwise a Vaani or FLEURS segment.
+Utterances, each rescaled within $\pm$3\,dB and separated by 50--600\,ms gaps, are joined until the 6--10\,s crop
+is full. The crop is scaled to $-30\ldots-15$\,dBFS.
+\item The number of events is $k=n\cdot U(1,L/4.5\,\text{s})\cdot U(\text{ev\_mult})$, where $n$ is drawn from the
+per-clip event counts of the validation synthetic set.
+\item Each event is a validation noise event ($p{=}0.7$) or an ESC-50 crop of empirical event duration ($p{=}0.3$)
+with 5\,ms fades and random polarity, placed at a uniform offset. Its level relative to the clean RMS is drawn
+from the empirical validation distribution (median $+4.3$\,dB), plus $\mathcal{N}(0,2)$\,dB, plus
+$U(\text{db\_shift})$.
+\item The frame event mask (hop 128) is the target of the activity head. Mixture and target are peak-normalised
+jointly.
+\end{enumerate}
+The simulated mixtures match validation (median input SI-SDR $-2.5$ vs.\ $-2.6$\,dB; event coverage 43\% vs.\ 45\%).
+Stage~2 uses $\text{ev\_mult}=(1,2)$, $\text{db\_shift}=(0,3)$\,dB and 10\,s crops.
+
+\section{Proposed Method}
+\subsection{Models}
+\textbf{DNS64.} The Demucs waveform U-Net with an LSTM bottleneck~\cite{demucs} (hidden width 64, 33.5\,M
+parameters), initialised from the public checkpoint \texttt{dns64-a7761ff99a7d5bb6.th} (facebookresearch/denoiser).
+
+\textbf{Event-gated BSRNN} (ours, 11.3\,M parameters), after band-split RNN~\cite{bsrnn}.
+\begin{itemize}
+\item A 512-point STFT (hop 128) is split into 37 bands of $16{\times}4$, $16{\times}8$, $4{\times}16$ and 1 bins.
+Each band is normalised and projected to 112 features.
+\item Six blocks alternate residual BLSTMs over time and over bands. Per-band GLU MLPs output a complex mask
+$\mathbf{M}$, so $\hat{s}=\text{iSTFT}(\mathbf{M}\odot\mathbf{X})$.
+\item A gate head maps the concatenated band features to an event probability $p(t)$. The output is
+\begin{equation}
+y = x + g(t)\,(\hat{s}-x),\qquad g(t)=\gamma+(1-\gamma)\,p(t),
+\end{equation}
+with floor $\gamma=0.2$, so every frame is still processed while event-free speech stays close to the input.
+\end{itemize}
+
+\subsection{Losses}
+For mixture $x$, clean target $s$ and event mask $m$,
+\begin{align}
+\mathcal{L}_{\text{BSRNN}} ={}& \tfrac12\mathcal{L}_{\text{rec}}(\hat{s},s)+\tfrac12\mathcal{L}_{\text{rec}}(y,s)
++ \text{BCE}(p,m) + \lambda\,\mathcal{L}_{\text{ASR}},\\
+\mathcal{L}_{\text{rec}}(a,s) ={}& -\text{SI-SDR}(a,s) + 0.5\,\text{MRSTFT}(a,s),
+\end{align}
+and $\mathcal{L}_{\text{DNS64}}=\mathcal{L}_{\text{rec}}(\hat{s},s)+\lambda\mathcal{L}_{\text{ASR}}$.
+\begin{itemize}
+\item MRSTFT is the L1 distance between log-magnitudes at FFT sizes 256, 512 and 1024~\cite{pwg}.
+\item SI-SDR is the metric itself~\cite{sisdr}.
+\item The \emph{ASR-consistency loss} $\mathcal{L}_{\text{ASR}}$ is the L1 distance between the frozen SraVaani-1.0
+encoder~\cite{sravaani} outputs on the enhanced and clean signals, normalised by the target's mean magnitude. It
+is applied every second step, with $\lambda=0.1$ (0.2 for one DNS64 run). Its front end replicates the ASR's
+pre-emphasis, 128-bin log-mel and per-feature normalisation. Gradients flow through the frozen encoder into the
+enhancer, so the enhancer learns outputs the mandated ASR transcribes like clean speech.
+\end{itemize}
+
+\subsection{Training strategy}
+\textbf{Optimiser.} AdamW~\cite{adamw} (weight decay $10^{-2}$) with a 500-step warm-up and a cosine schedule driven by
+\emph{wall-clock time}, which guarantees completion inside a fixed GPU allocation. We use gradient clipping at 5
+and bf16 autocast for BSRNN, and keep the best checkpoint by evaluation SI-SDR.
+
+\textbf{Stage 1} (holdout selection):
+\begin{itemize}
+\item DNS64: 6\,s crops, learning rate $10^{-4}$, 210\,min on an NVIDIA B200.
+\item BSRNN: trained from scratch, 6\,s crops, learning rate $10^{-3}$, 180\,min on an A100 80\,GB.
+\item A second DNS64: 8\,s crops, learning rate $2{\cdot}10^{-4}$, $\lambda=0.2$, 150\,min on an A100.
+\end{itemize}
+
+\textbf{Pseudo-test.} After the first submission showed a large gap between validation and test, we built a
+pseudo-test only from the 135 holdout clips. It has 106 clips of 2--3 joined holdout references (median 13.5\,s)
+carrying their own noise plus $0.5\times$ extra holdout events at $+1.5$\,dB. Its median input SI-SDR is
+$-4.5$\,dB, which matches the noise level we estimated for the real synthetic test clips ($-4.48$\,dB). It reproduces
+the real per-clip score distribution of our first submission (median 12.79 vs.\ 12.27\,dB; 5th percentile 4.78
+vs.\ 4.59\,dB).
+
+\textbf{Stage 2} fine-tunes DNS64 and BSRNN on test-like mixtures for 50\,min each on the B200. Checkpoints are
+selected on the pseudo-test, and BSRNN's clean pool excludes the Vaani segments.
+
+\textbf{Inference.} The final system averages the two stage-2 models, with gate floor 0.2. Output RMS is matched to
+the input, clips are processed in 20\,s chunks with a 2\,s cross-fade, and audio is written as PCM-16. Transcripts
+come from the unmodified SraVaani-1.0 (fp32, greedy TDT~\cite{tdt}) on the written WAVs.
+
+\textbf{Candidate selection.} Candidates are ranked by an \emph{estimated leaderboard score}:
+\begin{itemize}
+\item pseudo-test SI-SDR minus a 0.70\,dB calibration offset;
+\item plus $0.32\times$ the synthetic $\Delta$WER, measured on holdout clips against ASR-on-clean transcripts and
+calibrated to our first submission;
+\item plus $0.68\times$ the natural-validation $\Delta$WER.
+\end{itemize}
+The weights 0.32 and 0.68 are the synthetic and natural shares of words in the test set.
+
+\section{Results and Conclusion}
+\begin{table}[t]
+\centering
+\caption{SI-SDR (dB) on the validation holdout (135 clips) and the pseudo-test (106 clips), and the Phase~2 test
+score (SI-SDR / $\Delta$WER / combined).}
+\label{tab:res}
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lccc}
+\toprule
+System & Holdout & Pseudo-test & Test (Codabench)\\
+\midrule
+Noisy input & $-0.76$ & $-3.75$ & --\\
+DNS64 (stage 1) & 19.04 & 12.81 & --\\
+BSRNN, gated (stage 1) & 19.04 & 12.67 & --\\
+DNS64 + BSRNN & 19.78 & 13.36 & 12.66 / 1.80 / 14.46\\
++ second DNS64 & 19.71 & 13.36 & -- / -- / 14.41\\
+\textbf{Stage-2 DNS64 + BSRNN} & -- & \textbf{13.52} & \textbf{12.78 / 1.87 / 14.65}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:res} summarises the results.
+\begin{itemize}
+\item \textbf{Final submission (995085):} SI-SDR 12.78\,dB and $\Delta$WER $+1.87$, of which $+5.41$ on synthetic and
+$+0.21$ on natural clips. Combined 14.65; the hidden ASR audit passed with 0\% mismatch.
+\item \textbf{Architectural diversity helps.} DNS64 + BSRNN gains 0.75\,dB over either model alone and turns the
+holdout $\Delta$WER positive, whereas averaging two DNS64 models adds nothing.
+\item \textbf{The learned gate is only useful with good data.} BSRNN gated at $\gamma=0.2$ reaches 19.04\,dB, against
+17.82\,dB ungated. In a run whose clean pool also contained noisier Vaani speech, the gate instead lowered
+SI-SDR (10.5 vs.\ 16.5\,dB ungated), consistent with activity targets that mislabel real background noise as
+speech.
+\item \textbf{Noise level, not duration, limits performance.} On the scored test clips, per-clip SI-SDR correlates
+0.82 with the estimated input SNR and 0.09 with clip length. Clips below $-6$\,dB input SNR (39\%) average
+8.5\,dB, and clips above 0\,dB average 20.7\,dB. On the pseudo-test our ensemble (13.36\,dB) already exceeds the
+ideal ratio mask (12.99\,dB) and approaches the ideal phase-sensitive mask (15.15\,dB): mask-style enhancement has
+little headroom left at such SNRs.
+\item \textbf{Pseudo-test fidelity.} The estimator predicted 14.52 for our final entry, which scored 14.65.
+Validation-holdout estimates were optimistic by about 5\,dB, because test clips are 2.7$\times$ longer and much
+noisier.
+\end{itemize}
+
+\textbf{Novelty.} Our contributions are (i) an event-gated BSRNN that learns event activity jointly with
+separation; (ii) ASR-consistency training through the frozen mandated ASR; (iii) wall-clock-scheduled training with
+validation-matched on-the-fly mixing; and (iv) a holdout-derived pseudo-test together with a calibrated
+estimate of the leaderboard score, used to choose submissions.
+
+\textbf{Conclusion.} A single learned, event-aware enhancer trained on statistically matched mixtures delivers
+strong SI-SDR, with a positive ASR gain on both natural and synthetic speech. The remaining gap lies in very low-SNR
+clips, where stronger separation models and longer test-condition training are the clearest next steps.
+
+\bibliographystyle{IEEEtran}
+\begin{thebibliography}{10}\setlength{\itemsep}{0pt}\footnotesize
+\bibitem{vaani} S.~Pulikodan \emph{et~al.}, ``VAANI: Capturing the language landscape for an inclusive digital India,'' arXiv:2603.28714, 2026.
+\bibitem{demucs} A.~D\'efossez, G.~Synnaeve, and Y.~Adi, ``Real time speech enhancement in the waveform domain,'' in \emph{Proc. Interspeech}, 2020.
+\bibitem{bsrnn} Y.~Luo and J.~Yu, ``Music source separation with band-split RNN,'' \emph{IEEE/ACM TASLP}, vol.~31, 2023.
+\bibitem{sisdr} J.~Le~Roux, S.~Wisdom, H.~Erdogan, and J.~R.~Hershey, ``SDR -- half-baked or well done?'' in \emph{Proc. ICASSP}, 2019.
+\bibitem{pwg} R.~Yamamoto, E.~Song, and J.-M.~Kim, ``Parallel WaveGAN,'' in \emph{Proc. ICASSP}, 2020.
+\bibitem{esc50} K.~J.~Piczak, ``ESC: Dataset for environmental sound classification,'' in \emph{Proc. ACM Multimedia}, 2015.
+\bibitem{fleurs} A.~Conneau \emph{et~al.}, ``FLEURS: Few-shot learning evaluation of universal representations of speech,'' in \emph{Proc. IEEE SLT}, 2022.
+\bibitem{sravaani} ARTPARK-IISc, ``SraVaani-1.0 ASR,'' \url{https://huggingface.co/ARTPARK-IISc/SraVaani-1.0}, 2026.
+\bibitem{tdt} H.~Xu \emph{et~al.}, ``Efficient sequence transduction by jointly predicting tokens and durations,'' in \emph{Proc. ICML}, 2023.
+\bibitem{adamw} I.~Loshchilov and F.~Hutter, ``Decoupled weight decay regularization,'' in \emph{Proc. ICLR}, 2019.
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,8 @@
+# checkpoints are hosted on Hugging Face (see checkpoints/README.md)
+checkpoints/*.pt
+checkpoints/*.th
+data/
+outputs/
+*.pyc
+__pycache__/
+.DS_Store
